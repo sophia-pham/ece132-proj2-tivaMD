@@ -47,8 +47,13 @@ void ir_setup(void);
 void adc_setup(void);
 void uart_setup(void);
 void led_setup(void);
-void colorblind(void);
 void UART_String(char string[]);
+
+void bmi_isr(void);
+
+void colorblind(void);
+void temperature(void);
+void bmi(void);
 
 //Global Variables
 DHT_TypeDef th; //temperature in celsius and humidity
@@ -69,6 +74,8 @@ void main(){
     th.celsius_temp = 0;
     th.humidity = 0;
 
+    //initialize UART interrupt for bmi test
+//    UARTIntRegister(UART0_BASE, bmi_isr); //it will call bmi_isr function when the interrupt is enabled and triggered
 
     while(1){
         UART_String("Starting Colorblind Test...");
@@ -77,9 +84,21 @@ void main(){
     }
 }
 
+void bmi(void){
+    UART_String("Please enter your weight (lbs.) using the potentiometer as a scale");
+    //while loop, poll the potentiometer and measure the weight as the ratio between the current resistance and the max
+    //if range is between 80 and 280 lbs, then minimum pot value is 80 and max is 280
+    bool w_loop = true;
+    while (w_loop){
+        //output the current weight selection every second, any input to the UART triggers an interrupt
+
+        w_loop = false;
+    }
+}
+
 void temperature(void){
     UART_String("Please place hand on the temperature sensor.");
-    SysCtlDelay(10000); //delay defined in the
+    SysCtlDelay(1000); //arbitrary delay to give a digestible and readable output
     UART_String("Reading temperature...");
 
     dht_readTH(&th); //read first temperature into the th object
@@ -95,7 +114,7 @@ void temperature(void){
     float f_temp = avg_temp * 9/5 + 32; //convert celsius to fahrenheit
 
     //display temp to terminal
-    char* s;
+    char* s = NULL;
     sprintf(s, "Your temperature: %.1f", f_temp); //from man sprintf 3, it writes formatted output to character string
     UART_String(s);
 
