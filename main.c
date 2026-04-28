@@ -28,8 +28,6 @@
 #include "driverlib/systick.h"
 #include "driverlib/pwm.h"
 
-#include "driverlib/ms_dht11.h" //temp sensor driver
-
 /*------MACRO DECLARATIONS------*/
 #define DELAY           100000000
 #define BUFF_SIZE 1000
@@ -59,22 +57,21 @@ void uart_string_no_new(char string[]);
 void uart_float_no_new(float f, int precision);
 void uart_new(void);
 
+void buzz(void);
+
 void weight_isr(void); //gpio interrupt isr; when button press, display or confirm weight
 void height_isr(void); //"" display or confirm height
 
 void colorblind(void);
 void eye_track(void);
 void bmi(void);
-void temperature(void);
 
 /*------GLOBAL VARIABLES------*/
 int user_in = -1; //parsed from user input; informs state transitions
 
-//for temperature
-DHT_TypeDef th; //temperature in celsius and humidity
-
 //for pwm
 unsigned long ulPeriod; // Stores PWM period in clock ticks
+unsigned long buzzPeriod; // Period for PWM to buzzer
 int divider;    // Clock divider to calculate PWM
 
 //for bmi test
@@ -88,65 +85,19 @@ void main(){
 
     //set up periphs
     uart_setup();
+    pwm_setup();
     adc_setup();
     ir_setup();
     led_setup();
     switch_setup();
-    dht_init();
 
-    //initialize globals
-    th.celsius_temp = 0;
-    th.humidity = 0;
-
-    //initialize UART interrupt for bmi test
-//    UARTIntRegister(UART0_BASE, bmi_isr); //it will call bmi_isr function when the interrupt is enabled and triggered
-
-//    while(1){
-//        uart_string("Starting Temperature Test...");
-//        temperature();
-//        SysCtlDelay(DELAY);
-//    }
-    bmi();
+    while (1) {
+        buzz(); //will play success tone once
+        SysCtlDelay(DELAY/10);
+    }
 }
 
 /*----------HEALTH EXAMS----------*/
-/**
- * Temperature Test (s6)
- *
- * Take the patient's temperature, check if healthy, and display result.
- */
-void temperature(void){
-    uart_string("Please place hand on the temperature sensor.");
-    SysCtlDelay(10000000); //arbitrary delay to give a digestible and readable output
-    uart_string("Reading temperature...");
-
-    dht_readTH(&th); //read first temperature into the th object
-    float tot_temp = 0; //total temperature
-    int i;
-    for (i = 0; i < 10; i++){ //total of 10 samples for averaging
-        dht_readTH(&th);
-        tot_temp += th.celsius_temp;
-        SysCtlDelay(10000); //wait so there is some time between samples
-    }
-
-    uart_string("Calculating temperature...");
-
-    float avg_temp = tot_temp / 10; //should never have a div by 0 error
-    float f_temp = avg_temp * 9/5 + 32; //convert celsius to fahrenheit
-
-    //display temp to terminal
-//    char* s = NULL;
-//    snprintf(s,BUFF_SIZE, "Your temperature: %.1f", f_temp); //from man sprintf 3, it writes formatted output to character string
-//    uart_string(s);
-    uart_string_no_new("Your temperature: "); uart_float_no_new(f_temp, 1); uart_new();
-
-    if (f_temp < 80.0){
-        uart_string("Warning: Temperature below 80 degrees Fahrenheit");
-    } else if (f_temp > 100.0) {
-        uart_string("Warning: Temperature above 100 degrees Fahrenheit");
-    }
-}
-
 /**
  * BMI Test (s5)
  *
@@ -254,6 +205,7 @@ void height_isr(){
  * Moves a servo motor and asks the user which way it moved,
  * then displays the result of the test.
  */
+//eye track test
 void eye_track(){
     //Set duty cycles
     //Servo has period of 20ms or 50Hz
@@ -261,20 +213,24 @@ void eye_track(){
     //~1.5ms is centered (0 degrees) = 7.5% DC
     //~2ms is all the way to the right (90 degrees) = 10% DC
 
-    uart_string("Moving to the left...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((5 * ulPeriod) / 100)); //move to the left
-    SysCtlDelay(DELAY/3);
+    //sequence through 3 full movements (left to right) for the test
+    int j;
+    for(j = 1; j < 4; j++){
+        float i;
+        //from left to right go from 5 to 10%
+        //using a for loop tos increment through duty cycle for a more continuous movement
 
-    uart_string("Moving to the center...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((75 * ulPeriod) / 1000)); //move to the center
-    SysCtlDelay(DELAY/3);
+        for(i = 3.5; i < 11.0; i = i + 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+         }
 
-    uart_string("Moving to the right...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((10 * ulPeriod) / 100)); //move to the right
-    SysCtlDelay(DELAY/3);
+         //from left to right go from 10 to 5%
+         //changed 10 to 11 and 5 to 2.0
+         for(i = 11.0; i > 3.5; i = i - 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+         }
+    }
 
-    //AFTER TESTING THE SERVO ARM IS MOVING FROM THE LEFT, TO CENTER, TO RIGHT AS EXPECTED BUT NOT AT FULL MASS AND A BIT FINICKY
-    //TODO: THESE NUMBERS NEED TO BE PLAYED WITH
 }
 
 /**
@@ -320,6 +276,21 @@ void colorblind(void){
 }
 
 /*----------HELPER FUNCTIONS----------*/
+//buzz the buzzer
+void buzz(){
+    float notes[] = {440, 554.365, 659.255, 880}; //A, C#, E, A
+
+    int i;
+    for (i = 0; i < 4; i++){
+        buzzPeriod = SysCtlClockGet() / notes[i];
+        PWMGenPeriodSet(PWM1_BASE, PWM_GEN_2, buzzPeriod);
+        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_5, (int)((50 * buzzPeriod) / 100)); //play note
+        SysCtlDelay(DELAY/1000); //give it time to play
+        PWMPulseWidthSet(PWM1_BASE, PWM_OUT_5, 0); //turn it off
+        SysCtlDelay(DELAY/1000); //wait before the next note
+    }
+}
+
 //print strings
 void uart_string(char string[]){
     int i;
@@ -468,7 +439,15 @@ void pwm_setup(){
     //80MHz / 64 = 1.25MHz and 1.25MHz/50Hz = 25,000
     //A ulperiod of 25,000 fits within the 16 bit servo register
 
-    SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
+
+    SysCtlPWMClockSet(SYSCTL_PWMDIV_1);
+
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+
+    //wait for the peripheral to be ready
+    //this is a best practice
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+
     // Enable PWM Module PWM1 (controls PF1 and PF2)
     SysCtlPeripheralEnable(SYSCTL_PERIPH_PWM1);
 
@@ -480,24 +459,31 @@ void pwm_setup(){
     divider = 50; // freq for the servo is 50 Hz
     ulPeriod = (SysCtlClockGet() / 64) / divider;
 
+    // Calculate initial period for buzzer (440 Hz)
+    buzzPeriod = SysCtlClockGet() / 440;
+
     // Configure PF2 (M1PWM6) for PWM output
     // Information about GPIOPinConfigure is on page 266
-    GPIOPinConfigure(GPIO_PF2_M1PWM6); // Map PF2 to M1PWM6
+    GPIOPinConfigure(GPIO_PF1_M1PWM5); // Map PF1 to M1PWM5, buzzer
+    GPIOPinConfigure(GPIO_PF2_M1PWM6); // Map PF2 to M1PWM6, servo
 
     // GPIOPinTypePWM performs the task: it configures pins for use by the PWM peripheral
     // Pin PF2 is set up as GPIO_PIN_2
     // Set PF2 pin as PWM outputs
-    GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_2);
+    GPIOPinTypePWM(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2);
 
-    // Configure PWM Generator PWM_GEN_3 (controls M1PWM6) in up down counting mode
-    PWMGenConfigure(PWM1_BASE, PWM_GEN_3, PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC);
+    // Configure PWM Generators PWM_GEN_2 and 3 (controls M1PWM6) in up down counting mode
+    PWMGenConfigure(PWM1_BASE, PWM_GEN_2, PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC); //buzzer
+    PWMGenConfigure(PWM1_BASE, PWM_GEN_3, PWM_GEN_MODE_UP_DOWN | PWM_GEN_MODE_NO_SYNC); //servo
 
     // Set PWM period for Generator 3 (M1PWM6)
+    PWMGenPeriodSet(PWM1_BASE, PWM_GEN_2, buzzPeriod);
     PWMGenPeriodSet(PWM1_BASE, PWM_GEN_3, ulPeriod);
 
     //Enable PWM Generator 3 to start output
+    PWMGenEnable(PWM1_BASE, PWM_GEN_2);
     PWMGenEnable(PWM1_BASE, PWM_GEN_3);
 
     // Enable PWM output PF2 (M1PWM6)
-    PWMOutputState(PWM1_BASE, PWM_OUT_6_BIT, true);
+    PWMOutputState(PWM1_BASE, PWM_OUT_5_BIT | PWM_OUT_6_BIT, true);
 }
