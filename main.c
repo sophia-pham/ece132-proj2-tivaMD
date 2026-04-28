@@ -155,7 +155,7 @@ void temperature(void){
  */
 void bmi(void){
     //prompt the user for weight entry
-    uart_string("Please enter your weight (lb.) using the potentiometer as a scale.\n\rUse the left button to check the current value, and the right button to submit.");
+    uart_string("Please enter your weight (in pounds) using the potentiometer as a scale.\n\rUse the left button to check the current value, and the right button to submit.");
     //register and activate the isr that allows button press to print value
     GPIOIntRegister(GPIO_PORTF_BASE, weight_isr);
     GPIOIntEnable(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //left or right button press activates
@@ -164,7 +164,7 @@ void bmi(void){
     GPIOIntDisable(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //disable the weight interrupt to reconfigure for height
 
     //prompt the user for height entry
-    uart_string("Please enter your height (in.) using the potentiometer as a scale.\n\rUse the left button to check the current value, and the right button to submit.");
+    uart_string("Please enter your height (in inches) using the potentiometer as a scale.\n\rUse the left button to check the current value, and the right button to submit.");
     //register and activate the height isr
     GPIOIntRegister(GPIO_PORTF_BASE, height_isr);
     GPIOIntEnable(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //left or right button press activates
@@ -173,7 +173,19 @@ void bmi(void){
     GPIOIntDisable(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //disable the height interrupt as to not disrupt main prog
 
     //calculate bmi
+    float bmi = weight / (height * height) * 703; //formula from the CDC
+    uart_string_no_new("Your BMI: "); uart_float_no_new(bmi, 1); uart_new();
 
+    //healthy ranges from the CDC
+    if (bmi < 18.5){
+        uart_string("Warning: BMI below 18.5 (Underweight)");
+    } else if (bmi > 25.0) {
+        uart_string("Warning: BMI above 25.0 (Overweight)");
+    }
+    else {
+        uart_string("Your BMI is within healthy weight range.");
+    }
+    uart_new();
 
     //clear the vars before returning to main
     weight = -1; height = -1;
@@ -184,8 +196,6 @@ void bmi(void){
  * if range is between 80 and 280 lbs, then minimum pot value is 80 and max is 280
  */
 void weight_isr(){
-//    uart_string("Getting weight...");
-
     //get current pot setting
     uint32_t INPUT; //store the adc value
     ADCProcessorTrigger(ADC0_BASE, 0);//This function will trigger the sample sequence
@@ -214,8 +224,6 @@ void weight_isr(){
 
 /*isr for button press in the height collection stage; calculates then displays or sets weight*/
 void height_isr(){
-    uart_string("Getting height...");
-
     //get current pot setting
     uint32_t INPUT; //store the adc value
     ADCProcessorTrigger(ADC0_BASE, 0);//This function will trigger the sample sequence
