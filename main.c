@@ -117,7 +117,7 @@ void main(){
  */
 void temperature(void){
     uart_string("Please place hand on the temperature sensor.");
-//    SysCtlDelay(1000); //arbitrary delay to give a digestible and readable output
+    SysCtlDelay(10000000); //arbitrary delay to give a digestible and readable output
     uart_string("Reading temperature...");
 
     dht_readTH(&th); //read first temperature into the th object
@@ -184,12 +184,13 @@ void bmi(void){
  * if range is between 80 and 280 lbs, then minimum pot value is 80 and max is 280
  */
 void weight_isr(){
-    uart_string("Getting weight...");
+//    uart_string("Getting weight...");
 
     //get current pot setting
     uint32_t INPUT; //store the adc value
     ADCProcessorTrigger(ADC0_BASE, 0);//This function will trigger the sample sequence
     ADCSequenceDataGet(ADC0_BASE, 0,&INPUT); //This function will store the resultant data in INPUT
+    //it helps to read from the correct pin
 
     //calculate weight
     float curr_voltage = .0008057 * INPUT;
@@ -204,12 +205,11 @@ void weight_isr(){
     //when SW2 is pushed (bit 0), confirm weight selection and move on to height
     else if (0 == (GPIO_PORTF_DATA_R & 0b00000001)){ // if 0bxxx0xxxx & 0b00010000, then we know bit 0 is 0
         uart_string_no_new("Weight Selected: "); uart_float_no_new(curr_weight,1); uart_string(" pounds");
-//        weight = curr_weight; //FIXME: ONLY FOR TESTING
-        weight = 100; //FIXME: ONLY FOR TESTING
+        weight = curr_weight;
     }
-    uart_string("Gonna clear interrupt");
+//    uart_string("Gonna clear interrupt");
     GPIOIntClear(GPIO_PORTF_BASE , GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //clear the flag so that we can interrupt again in the future
-    uart_string("Leaving weight isr");
+//    uart_string("Leaving weight isr");
 }
 
 /*isr for button press in the height collection stage; calculates then displays or sets weight*/
@@ -235,8 +235,7 @@ void height_isr(){
     //when SW2 is pushed (bit 0), confirm height selection
     else if (0 == (GPIO_PORTF_DATA_R & 0b00000001)){ // if 0bxxx0xxxx & 0b00010000, then we know bit 0 is 0
         uart_string_no_new("Height Selected: "); uart_float_no_new(curr_height,1); uart_string(" inches");
-//        height = curr_height;
-        height = 60; //FIXME: ONLY FOR TESTING
+        height = curr_height;
     }
     GPIOIntClear(GPIO_PORTF_BASE , GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //clear the flag so that we can interrupt again in the future
 }
@@ -344,26 +343,39 @@ void uart_float_no_new(float f, int precision){
     int fractional_divisor = pow(10, (int)log10(fractional)); //get the closest 10s power of the fractional segment
 
     // send the whole numbered segment from left to right
-    while(whole_divisor > 0){ // this works because int division (ex. 3/10 = 0 due to truncating)
-        int currentDigit = whole / whole_divisor; // get first digit
+    if (whole_divisor < 1) { //if smaller than 1s place, then print 0
+        UARTCharPut(UART0_BASE, 0x30);
+    }
+    else {
+        while(whole_divisor > 0){ // this works because int division (ex. 3/10 = 0 due to truncating)
+            int currentDigit = whole / whole_divisor; // get first digit
 
-        UARTCharPut(UART0_BASE, currentDigit + 0x30); // send number and add 30 to compensate for ASCII conversion
+            UARTCharPut(UART0_BASE, currentDigit + 0x30); // send number and add 30 to compensate for ASCII conversion
 
-        whole = whole % whole_divisor; // decrement the number (the remainder after getting rid of what was just displayed) (ex. 234 --> 34)
-        whole_divisor /= 10; //decrement the divisor
+            whole = whole % whole_divisor; // decrement the number (the remainder after getting rid of what was just displayed) (ex. 234 --> 34)
+            whole_divisor /= 10; //decrement the divisor
+        }
     }
 
     //send radix
     UARTCharPut(UART0_BASE, '.'); // send number and add 30 to compensate for ASCII conversion
 
-    // send fractional segment
-    while(fractional_divisor > 0){ // this works because int division (ex. 3/10 = 0 due to truncating)
-        int currentDigit = fractional / fractional_divisor; // get first digit
+    if (fractional_divisor < 1) {
+        int i;
+        for (i = 0; i < precision; i++) {
+            UARTCharPut(UART0_BASE, 0x30);
+        }
+    }
+    else {
+        // send fractional segment
+        while(fractional_divisor > 0){ // this works because int division (ex. 3/10 = 0 due to truncating)
+            int currentDigit = fractional / fractional_divisor; // get first digit
 
-        UARTCharPut(UART0_BASE, currentDigit + 0x30); // send number and add 30 to compensate for ASCII conversion
+            UARTCharPut(UART0_BASE, currentDigit + 0x30); // send number and add 30 to compensate for ASCII conversion
 
-        fractional = fractional % fractional_divisor; // decrement the number (the remainder after getting rid of what was just displayed) (ex. 234 --> 34)
-        fractional_divisor /= 10; //decrement the divisor
+            fractional = fractional % fractional_divisor; // decrement the number (the remainder after getting rid of what was just displayed) (ex. 234 --> 34)
+            fractional_divisor /= 10; //decrement the divisor
+        }
     }
 }
 void uart_new(){
