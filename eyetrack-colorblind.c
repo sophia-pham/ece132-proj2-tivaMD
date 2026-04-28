@@ -133,20 +133,38 @@ void eye_track(){
     //~1.5ms is centered (0 degrees) = 7.5% DC
     //~2ms is all the way to the right (90 degrees) = 10% DC
 
-    UART_String("Moving to the left...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((5 * ulPeriod) / 100)); //move to the left
-    SysCtlDelay(DELAY/3);
-
-    UART_String("Moving to the center...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((75 * ulPeriod) / 1000)); //move to the center
-    SysCtlDelay(DELAY/3);
-
-    UART_String("Moving to the right...");
-    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((10 * ulPeriod) / 100)); //move to the right
-    SysCtlDelay(DELAY/3);
+//    UART_String("Moving to the left...");
+//    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((5 * ulPeriod) / 100)); //move to the left
+//    SysCtlDelay(DELAY/3);
+//
+//    UART_String("Moving to the center...");
+//    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((75 * ulPeriod) / 1000)); //move to the center
+//    SysCtlDelay(DELAY/3);
+//
+//    UART_String("Moving to the right...");
+//    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, ((10 * ulPeriod) / 100)); //move to the right
+//    SysCtlDelay(DELAY/3);
 
     //AFTER TESTING THE SERVO ARM IS MOVING FROM THE LEFT, TO CENTER, TO RIGHT AS EXPECTED BUT NOT AT FULL MASS AND A BIT FINICKY
     //THESE NUMBERS NEED TO BE PLAYED WITH
+
+    //sequence through 3 full movements (left to right) for the test
+    int j;
+    for(j = 1; j < 4; j++){
+        float i;
+        //from left to right go from 5 to 10%
+        //using a for loop tos increment through duty cycle for a more continuous movement
+
+        for(i = 3.5; i < 11.0; i = i + 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+         }
+
+         //from left to right go from 10 to 5%
+         //changed 10 to 11 and 5 to 2.0
+         for(i = 11.0; i > 3.5; i = i - 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+          }
+    }
 
 }
 
