@@ -27,6 +27,7 @@
 #include "driverlib/adc.h"
 #include "driverlib/systick.h"
 #include "driverlib/pwm.h"
+#include "driverlib/watchdog.h"
 
 /*------MACRO DECLARATIONS------*/
 #define DELAY           100000000
