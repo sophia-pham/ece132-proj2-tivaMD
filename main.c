@@ -39,7 +39,11 @@
 #define S_COLOR 3
 #define S_EYE 4
 #define S_BMI 5
-#define S_TEMP 6
+//pin assignments
+#define PINS_OFF 0x00
+#define PORT_A_UART 0x03 //PA0(RX) and PA1(TX)
+#define PORT_E_LEDS 0x03 //PE0 (Red) and PE1 (Green)
+#define PORT_F_SERVO 0x04 //PF2
 //specs for bmi
 #define MAX_WEIGHT 280
 #define MIN_WEIGHT 80
@@ -47,6 +51,7 @@
 #define MIN_HEIGHT 48 //4'
 
 /*------FUNCTION PROTOTYPES------*/
+void watchdog_setup(void);
 void pwm_setup(void);
 void ir_setup(void);
 void adc_setup(void);
@@ -57,10 +62,8 @@ void uart_string(char string[]);
 void uart_string_no_new(char string[]);
 void uart_float_no_new(float f, int precision);
 void uart_new(void);
-void watchdog_setup(void);
 
-
-void buzz(void);
+void buzz(int mode);
 
 void weight_isr(void); //gpio interrupt isr; when button press, display or confirm weight
 void height_isr(void); //"" display or confirm height
@@ -72,7 +75,7 @@ void bmi(void);
 
 /*------GLOBAL VARIABLES------*/
 int user_in = -1; //parsed from user input; informs state transitions
-volatile bool g_bWatchDogFeed = 1; //tracker for watchdog 
+volatile bool g_bWatchDogFeed = 1; //tracker for watchdog
 
 //for pwm
 unsigned long ulPeriod; // Stores PWM period in clock ticks
@@ -83,12 +86,31 @@ int divider;    // Clock divider to calculate PWM
 float weight = -1;
 float height = -1;
 
+//set up FSM struct and states
+struct state{
+    int id;
+    int outA; //UART
+    int outE; //CB Lights
+    int outF; //Servo
+    int colorFlag; //flag to trigger color test
+    int eyeFlag; //trigger eye test
+    int bmiFlag; //trigger bmi test
+    int wait; //delay
+    unsigned int next[6];
+};
+
+typedef struct state stype; //define type
+stype cstate; //current state
+
+
+
 void main(){
 
     //Setting the internal clock
     SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
     //set up periphs
+//    watchdog_setup();
     uart_setup();
     pwm_setup();
     adc_setup();
@@ -96,10 +118,93 @@ void main(){
     led_setup();
     switch_setup();
 
-    while (1) {
-        buzz(); //will play success tone once
-        SysCtlDelay(DELAY/10);
-    }
+    stype fsm[6] = {
+        //id-outA-outE-outF-colorFlag-eyeFlag-bmiFlag-delay-next state
+        {S_OFF, PINS_OFF, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_OFF, S_START, S_OFF, S_OFF, S_OFF, S_OFF}}, //only goes to start
+
+        {S_START, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_OFF, S_START, S_IDLE, S_START, S_START}}, //goes to idle or off?
+
+        {S_IDLE, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_OFF, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to any exam or off
+
+        {S_COLOR, PORT_A_UART, PORT_E_LEDS, PINS_OFF, 1, 0, 0, DELAY,
+        {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR}}, //goes to idle
+
+        {S_EYE, PORT_A_UART, PINS_OFF, PORT_F_SERVO, 0, 1, 0, DELAY,
+        {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE}}, //goes to idle
+
+        {S_BMI, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 1, DELAY,
+        {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI}}, //goes to idle
+    };
+
+//    //variable declarations for fsm logic
+//    cstate = fsm[S_OFF]; //set S_OFF as the first state
+//    char userIN; //test input
+//    int input = 0;
+//    uart_string("In S_OFF. Press 'S' to Start.");
+//
+//    while(1){
+//        //collect user input
+//        userIN = UARTCharGet(UART0_BASE); //user input
+//        switch(userIN){
+//                case 'O': //S_OFF, waits for a user to start the process
+//                    input = 0;
+//                    break;
+//                case 'S': //S_START, collects user info
+//                    input = 1;
+//                    break;
+//                case 'I': //S_IDLE, displays test menu
+//                    input = 2;
+//                    break;
+//                case 'C': //S_COLOR, triggers colorblind test
+//                    input = 3;
+//                    break;
+//                case 'E': //S_EYE, triggers eye track test
+//                    input = 4;
+//                    break;
+//                case 'B': //S_BMI, triggers bmi test
+//                    input = 5;
+//                    break;
+//                default:
+//                    continue; //input should be whatever it was before
+//            }
+//
+//        //transition to the next state given input
+//        cstate = fsm[cstate.next[input]];
+//
+//        //use flags to trigger tests
+//        if(cstate.colorFlag == 1){
+//            colorblind();
+//        }
+//        if(cstate.eyeFlag == 1){
+//            ();
+//        }
+//        if(cstate.bmiFlag == 1){
+//            bmi();
+//        }
+//
+//        //after test states transition back to idle
+//        if(cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
+//            cstate = fsm[cstate.next[S_IDLE]]; //transition to idle
+//        }
+//
+//        //prompt user inputs
+//        if(cstate.id == S_OFF){
+//            uart_string("In S_OFF. Press 'S' to Start.");
+//        }
+//        else if(cstate.id == S_START){
+//            uart_string("Are you ready? Press 'I' to Choose Test.");
+//        }
+//        else if(cstate.id == S_IDLE){
+//            uart_string("Choose your test (C, E, B) or turn system off (O)");
+//        }
+//    }
+
+    eye_track();
+    buzz(2);
+    while(1){}
 }
 
 /*----------HEALTH EXAMS----------*/
@@ -130,7 +235,9 @@ void bmi(void){
 
     //calculate bmi
     float bmi = weight / (height * height) * 703; //formula from the CDC
-    uart_string_no_new("Your BMI: "); uart_float_no_new(bmi, 1); uart_new();
+    uart_string_no_new("Your BMI: ");
+    uart_float_no_new(bmi, 1);
+    uart_new();
 
     //healthy ranges from the CDC
     if (bmi < 18.5){
@@ -222,19 +329,20 @@ void eye_track(){
     int j;
     for(j = 1; j < 4; j++){
         float i;
-        //from left to right go from 3.5 to 11 DC%
+        //from left to right go from 5 to 10%
         //using a for loop tos increment through duty cycle for a more continuous movement
 
         for(i = 3.5; i < 11.0; i = i + 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
          }
 
-         //from left to right go from 11 to 3.5% DC 
+         //from left to right go from 10 to 5%
          //changed 10 to 11 and 5 to 2.0
          for(i = 11.0; i > 3.5; i = i - 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
          }
     }
+    PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, 0);
 
 }
 
@@ -282,15 +390,38 @@ void colorblind(void){
 
 /*----------HELPER FUNCTIONS----------*/
 //buzz the buzzer
-void buzz(){
-    float notes[] = {440, 554.365, 659.255, 880}; //A, C#, E, A
+void buzz(int mode){
+    float* notes;
+    switch (mode){
+        //success
+        case 1:
+        {
+            float yay[] = {440, 554.365, 659.255, 880}; //A, C#, E, A
+            notes = yay;
+            break;
+        }
+        //womp womp
+        case 2:
+        {
+            float wompwomp[] = {293.665,277.183,261.626,246.942};
+            notes = wompwomp;
+            break;
+        }
+        //alert
+        default:
+        {
+            float alert[] = {880, 1244.51, 880, 1244.51};
+            notes = alert;
+            break;
+        }
+    }
 
     int i;
     for (i = 0; i < 4; i++){
-        buzzPeriod = SysCtlClockGet() / notes[i];
+        buzzPeriod = SysCtlClockGet() / 64 / *(notes + i);
         PWMGenPeriodSet(PWM1_BASE, PWM_GEN_2, buzzPeriod);
         PWMPulseWidthSet(PWM1_BASE, PWM_OUT_5, (int)((50 * buzzPeriod) / 100)); //play note
-        SysCtlDelay(DELAY/1000); //give it time to play
+        SysCtlDelay(DELAY/100); //give it time to play (long)
         PWMPulseWidthSet(PWM1_BASE, PWM_OUT_5, 0); //turn it off
         SysCtlDelay(DELAY/1000); //wait before the next note
     }
@@ -445,7 +576,7 @@ void pwm_setup(){
     //A ulperiod of 25,000 fits within the 16 bit servo register
 
 
-    SysCtlPWMClockSet(SYSCTL_PWMDIV_1);
+    SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
 
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
 
@@ -462,10 +593,10 @@ void pwm_setup(){
     // Calculate divider for 50 Hz PWM frequency
     // SysCtlClockGet() provides 1ms
     divider = 50; // freq for the servo is 50 Hz
-    ulPeriod = (SysCtlClockGet() / 64) / divider;
+    ulPeriod = (SysCtlClockGet() / 32) / divider;
 
     // Calculate initial period for buzzer (440 Hz)
-    buzzPeriod = SysCtlClockGet() / 440;
+    buzzPeriod = SysCtlClockGet() / 64 / 440;
 
     // Configure PF2 (M1PWM6) for PWM output
     // Information about GPIOPinConfigure is on page 266
@@ -495,41 +626,41 @@ void pwm_setup(){
 
 /*Watchdog configuration and interrupt enable*/
 void watchdog_setup(){
-	//enable the periph 
-	SysCtlPeripheralEnable(SYSCTL_PERIPH_WDOG0);
-	
-	//wait for module to be ready
-	while(!SysCtlPeripheralReady(SYSCTL_PERIPH_WDOG0)){}
-	
-	//enable watchdog interrupt
-	IntEnable(INT_WATCHDOG);
-	
-	//unlock register access
-	if(WatchdogLockState(WATCHDOG0_BASE) == true){
-		WatchdogUnlock(WATCHDOG0_BASE);
-	}
-	
-	//enable the watchdog interupt
-	WatchdogIntEnable(WATCHDOG0_BASE);
-	WatchdogIntTypeSet(WATCHDOG0_BASE, WATCHDOG_INT_TYPE_INT);
+    //enable the periph
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_WDOG0);
 
-	//set the period - reload timer 2.5 seconds, will reset after 5 seconds
-	WatchdogReloadSet(WATCHDOG0_BASE, SysCtlClockGet() * 2.5);
+    //wait for module to be ready
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_WDOG0)){}
 
-	//enable resetting if not fed
-	WatchdogResetEnable(WATCHDOG0_BASE);
+    //enable watchdog interrupt
+    IntEnable(INT_WATCHDOG);
 
-	//lock in the setup configuration
-	WatchdogLock(WATCHDOG0_BASE);
+    //unlock register access
+    if(WatchdogLockState(WATCHDOG0_BASE) == true){
+        WatchdogUnlock(WATCHDOG0_BASE);
+    }
 
-	//turn on Watchdog
-	WatchdogEnable(WATCHDOG0_BASE);
+    //enable the watchdog interupt
+    WatchdogIntEnable(WATCHDOG0_BASE);
+    WatchdogIntTypeSet(WATCHDOG0_BASE, WATCHDOG_INT_TYPE_INT);
+
+    //set the period - reload timer 2.5 seconds, will reset after 5 seconds
+    WatchdogReloadSet(WATCHDOG0_BASE, SysCtlClockGet() * 2.5);
+
+    //enable resetting if not fed
+    WatchdogResetEnable(WATCHDOG0_BASE);
+
+    //lock in the setup configuration
+    WatchdogLock(WATCHDOG0_BASE);
+
+    //turn on Watchdog
+    WatchdogEnable(WATCHDOG0_BASE);
 }
 
 /*Watchdog interrupt handler*/
 void WatchDogIntHandler(){
-	//if IR sensor is active feed the handler
-	if((GPIO_PORTF_DATA_R & 0x08) == 0){
-	    WatchdogIntClear(WATCHDOG0_BASE);
-	}
+    //if IR sensor is active feed the handler
+    if((GPIO_PORTF_DATA_R & 0x08) == 0){
+        WatchdogIntClear(WATCHDOG0_BASE);
+    }
 }
