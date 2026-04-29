@@ -8,8 +8,6 @@
 
 //variable declarations
 #define DELAY 100000000
-unsigned long ulPeriod; // Stores PWM period in clock ticks
-int divider;    // Clock divider to calculate PWM
 
 //Output  Pin Assignments
 #define PINS_OFF 0x00
@@ -26,7 +24,6 @@ struct state{
     int colorFlag; //flag to trigger color test
     int eyeFlag; //trigger eye test
     int bmiFlag; //trigger bmi test
-    int tempFlag; //trigger temp test
     int wait; //delay
     unsigned int next[6];
 }
@@ -37,28 +34,25 @@ stype cstate; //current state
 void main(){
 
     stype fsm[6] = {
-        //id-outA-outE-outF-colorFlag-eyeFlag-bmiFlag-tempFlag-delay-next state
-        {S_OFF, PINS_OFF, PINS_OFF, PINS_OFF, 0, 0, 0, 0, DELAY,
+        //id-outA-outE-outF-colorFlag-eyeFlag-bmiFlag-delay-next state
+        {S_OFF, PINS_OFF, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
         {S_OFF, S_START, S_OFF, S_OFF, S_OFF, S_OFF, S_OFF}},
 
-        {S_START, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, 0, DELAY,
+        {S_START, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
         {S_OFF, S_START, S_IDLE, S_START, S_START, S_START}},
 
-        {S_IDLE, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, 0, DELAY,
+        {S_IDLE, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
         {S_OFF, S_IDLE, S_IDLE, S_COLOR, S_EYE, S_BMI}},
 
-        {S_COLOR, PORT_A_UART, PORT_E_LEDS, PINS_OFF, 1, 0, 0, 0, DELAY, {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}},
+        {S_COLOR, PORT_A_UART, PORT_E_LEDS, PINS_OFF, 1, 0, 0, DELAY, 
+		{S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}},
 
-        {S_EYE, PORT_A_UART, PINS_OFF, PORT_F_SERVO, 0, 1, 0, 0, DELAY,
+        {S_EYE, PORT_A_UART, PINS_OFF, PORT_F_SERVO, 0, 1, 0, DELAY,
         {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE, S_EYE}},
 
-        {S_BMI, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 1, 0, DELAY,
+        {S_BMI, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 1, DELAY,
         {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI, S_BMI}},
-
-        //temperature state removed
-        //{S_TEMP, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, 1, DELAY,
-        //{S_OFF, S_TEMP, S_IDLE, S_TEMP, S_TEMP, S_TEMP, S_TEMP}}
-
+	
         };
 
     //variable declarations for fsm logic
