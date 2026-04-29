@@ -56,11 +56,14 @@ void uart_string(char string[]);
 void uart_string_no_new(char string[]);
 void uart_float_no_new(float f, int precision);
 void uart_new(void);
+void watchdog_setup(void);
+
 
 void buzz(void);
 
 void weight_isr(void); //gpio interrupt isr; when button press, display or confirm weight
 void height_isr(void); //"" display or confirm height
+void WatchDogIntHandler(void);
 
 void colorblind(void);
 void eye_track(void);
@@ -68,6 +71,7 @@ void bmi(void);
 
 /*------GLOBAL VARIABLES------*/
 int user_in = -1; //parsed from user input; informs state transitions
+volatile bool g_bWatchDogFeed = 1; //tracker for watchdog 
 
 //for pwm
 unsigned long ulPeriod; // Stores PWM period in clock ticks
@@ -217,14 +221,14 @@ void eye_track(){
     int j;
     for(j = 1; j < 4; j++){
         float i;
-        //from left to right go from 5 to 10%
+        //from left to right go from 3.5 to 11 DC%
         //using a for loop tos increment through duty cycle for a more continuous movement
 
         for(i = 3.5; i < 11.0; i = i + 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
          }
 
-         //from left to right go from 10 to 5%
+         //from left to right go from 11 to 3.5% DC 
          //changed 10 to 11 and 5 to 2.0
          for(i = 11.0; i > 3.5; i = i - 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
@@ -486,4 +490,45 @@ void pwm_setup(){
 
     // Enable PWM output PF2 (M1PWM6)
     PWMOutputState(PWM1_BASE, PWM_OUT_5_BIT | PWM_OUT_6_BIT, true);
+}
+
+/*Watchdog configuration and interrupt enable*/
+void watchdog_setup(){
+	//enable the periph 
+	SysCtlPeripheralEnable(SYSCTL_PERIPH_WDOG0);
+	
+	//wait for module to be ready
+	while(!SysCtlPeripheralReady(SYSCTL_PERIPH_WDOG0)){}
+	
+	//enable watchdog interrupt
+	IntEnable(INT_WATCHDOG);
+	
+	//unlock register access
+	if(WatchdogLockState(WATCHDOG0_BASE) == true){
+		WatchdogUnlock(WATCHDOG0_BASE);
+	}
+	
+	//enable the watchdog interupt
+	WatchdogIntEnable(WATCHDOG0_BASE);
+	WatchdogIntTypeSet(WATCHDOG0_BASE, WATCHDOG_INT_TYPE_INT);
+
+	//set the period - reload timer 2.5 seconds, will reset after 5 seconds
+	WatchdogReloadSet(WATCHDOG0_BASE, SysCtlClockGet() * 2.5);
+
+	//enable resetting if not fed
+	WatchdogResetEnable(WATCHDOG0_BASE);
+
+	//lock in the setup configuration
+	WatchdogLock(WATCHDOG0_BASE);
+
+	//turn on Watchdog
+	WatchdogEnable(WATCHDOG0_BASE);
+}
+
+/*Watchdog interrupt handler*/
+void WatchDogIntHandler(){
+	//if IR sensor is active feed the handler
+	if((GPIO_PORTF_DATA_R & 0x08) == 0){
+	    WatchdogIntClear(WATCHDOG0_BASE);
+	}
 }
