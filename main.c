@@ -103,14 +103,13 @@ typedef struct state stype; //define type
 stype cstate; //current state
 
 
-
 void main(){
 
     //Setting the internal clock
     SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
     //set up periphs
-//    watchdog_setup();
+    //watchdog_setup();
     uart_setup();
     pwm_setup();
     adc_setup();
@@ -124,87 +123,97 @@ void main(){
         {S_OFF, S_START, S_OFF, S_OFF, S_OFF, S_OFF}}, //only goes to start
 
         {S_START, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
-        {S_OFF, S_START, S_IDLE, S_START, S_START}}, //goes to idle or off?
+        {S_OFF, S_START, S_IDLE, S_START, S_START, S_START}}, //goes to idle or off?
 
         {S_IDLE, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
-        {S_OFF, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to any exam or off
+        {S_OFF, S_IDLE, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to any exam or off
 
         {S_COLOR, PORT_A_UART, PORT_E_LEDS, PINS_OFF, 1, 0, 0, DELAY,
-        {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR}}, //goes to idle
+        {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}}, //goes to idle
 
         {S_EYE, PORT_A_UART, PINS_OFF, PORT_F_SERVO, 0, 1, 0, DELAY,
-        {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE}}, //goes to idle
+        {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE, S_EYE}}, //goes to idle
 
         {S_BMI, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 1, DELAY,
-        {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI}}, //goes to idle
+        {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI, S_BMI}} //goes to idle
+
     };
 
-//    //variable declarations for fsm logic
-//    cstate = fsm[S_OFF]; //set S_OFF as the first state
-//    char userIN; //test input
-//    int input = 0;
-//    uart_string("In S_OFF. Press 'S' to Start.");
-//
-//    while(1){
-//        //collect user input
-//        userIN = UARTCharGet(UART0_BASE); //user input
-//        switch(userIN){
-//                case 'O': //S_OFF, waits for a user to start the process
-//                    input = 0;
-//                    break;
-//                case 'S': //S_START, collects user info
-//                    input = 1;
-//                    break;
-//                case 'I': //S_IDLE, displays test menu
-//                    input = 2;
-//                    break;
-//                case 'C': //S_COLOR, triggers colorblind test
-//                    input = 3;
-//                    break;
-//                case 'E': //S_EYE, triggers eye track test
-//                    input = 4;
-//                    break;
-//                case 'B': //S_BMI, triggers bmi test
-//                    input = 5;
-//                    break;
-//                default:
-//                    continue; //input should be whatever it was before
-//            }
-//
-//        //transition to the next state given input
-//        cstate = fsm[cstate.next[input]];
-//
-//        //use flags to trigger tests
-//        if(cstate.colorFlag == 1){
-//            colorblind();
-//        }
-//        if(cstate.eyeFlag == 1){
-//            ();
-//        }
-//        if(cstate.bmiFlag == 1){
-//            bmi();
-//        }
-//
-//        //after test states transition back to idle
-//        if(cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
-//            cstate = fsm[cstate.next[S_IDLE]]; //transition to idle
-//        }
-//
-//        //prompt user inputs
-//        if(cstate.id == S_OFF){
-//            uart_string("In S_OFF. Press 'S' to Start.");
-//        }
-//        else if(cstate.id == S_START){
-//            uart_string("Are you ready? Press 'I' to Choose Test.");
-//        }
-//        else if(cstate.id == S_IDLE){
-//            uart_string("Choose your test (C, E, B) or turn system off (O)");
-//        }
-//    }
+    //variable declarations for fsm logic
+    cstate = fsm[S_OFF]; //set S_OFF as the first state
+    char userIN; //test input
+    int input = 0;
+    uart_string("In S_OFF. Press 'S' to Start.");
 
-    eye_track();
-    buzz(2);
-    while(1){}
+    while(1){
+        //uart_string("test");
+        //collect user input
+        userIN = UARTCharGet(UART0_BASE); //user input
+        switch(userIN){
+                case 'O': //S_OFF, waits for a user to start the process
+                    input = 0;
+                    uart_string("'O' pressed... turning system off...");
+                    break;
+                case 'S': //S_START, collects user info
+                    input = 1;
+                    uart_string("'S' pressed... system starting...");
+                    break;
+                case 'I': //S_IDLE, displays test menu
+                    input = 2;
+                    uart_string("'I' pressed... entering IDLE stage...");
+                    break;
+                case 'C': //S_COLOR, triggers color blind test
+                    input = 3;
+                    uart_string("'C' pressed... starting the color blind test...");
+                    break;
+                case 'E': //S_EYE, triggers eye track test
+                    input = 4;
+                    uart_string("'E' pressed... starting the eye tracker test...");
+                    break;
+                case 'B': //S_BMI, triggers bmi test
+                    input = 5;
+                    uart_string("'B' pressed... starting the BMI test...");
+                    break;
+                default:
+                    continue; //input should be whatever it was before
+            }
+
+        //transition to the next state given input
+        cstate = fsm[cstate.next[input]];
+
+        //uart_string("test 2: state updated after key press");
+
+        //use flags to trigger tests
+        if(cstate.colorFlag == 1){
+            colorblind();
+        }
+        if(cstate.eyeFlag == 1){
+            eye_track();
+        }
+        if(cstate.bmiFlag == 1){
+            bmi();
+        }
+
+        //after test states transition back to idle
+        if(cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
+            cstate = fsm[cstate.next[S_IDLE]]; //transition to idle
+        }
+
+        //prompt user inputs
+        if(cstate.id == S_OFF){
+            uart_string("In S_OFF. Press 'S' to Start.");
+        }
+        else if(cstate.id == S_START){
+            uart_string("Are you ready? Press 'I' to Choose Test.");
+        }
+        else if(cstate.id == S_IDLE){
+            uart_string("Choose your test (C, E, B) or turn system off (O)");
+        }
+    }
+
+//    eye_track();
+//    buzz(2);
+//    while(1){}
 }
 
 /*----------HEALTH EXAMS----------*/
@@ -242,11 +251,14 @@ void bmi(void){
     //healthy ranges from the CDC
     if (bmi < 18.5){
         uart_string("Warning: BMI below 18.5 (Underweight)");
+        buzz(2); //failed buzz
     } else if (bmi > 25.0) {
         uart_string("Warning: BMI above 25.0 (Overweight)");
+        buzz(2); //failed buzz
     }
     else {
         uart_string("Your BMI is within healthy weight range.");
+        buzz(1); //success buzz
     }
     uart_new();
 
@@ -319,6 +331,7 @@ void height_isr(){
  */
 //eye track test
 void eye_track(){
+    char answer;
     //Set duty cycles
     //Servo has period of 20ms or 50Hz
     //~1ms is all the way to the left (-90 degrees) = 5% DC
@@ -332,18 +345,32 @@ void eye_track(){
         //from left to right go from 5 to 10%
         //using a for loop tos increment through duty cycle for a more continuous movement
 
-        for(i = 3.5; i < 11.0; i = i + 0.1){
-             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+        for(i = 2.5; i < 12.0; i = i + 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
          }
 
          //from left to right go from 10 to 5%
          //changed 10 to 11 and 5 to 2.0
-         for(i = 11.0; i > 3.5; i = i - 0.1){
-             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/150);
+         for(i = 12.0; i > 2.5; i = i - 0.1){
+             PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
          }
     }
     PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, 0);
 
+
+    uart_string("Did the patient's eyes follow the servo arm? Enter (Y/N)");
+    answer = UARTCharGet(UART0_BASE);
+
+    if(answer == 'Y' || answer == 'y'){
+        uart_string("Test successful!");
+        buzz(1); //successful buzz
+    }else if(answer == 'N' || answer == 'n'){
+        uart_string("Test failed!");
+        buzz(2); //failed buzz
+    }else{
+        uart_string("Test inconclusive!");
+        buzz(2); //failed buzz
+    }
 }
 
 /**
@@ -382,9 +409,11 @@ void colorblind(void){
 
         if(greenFlag && redFlag){
             uart_string("Success: Not Colorblind");
+            buzz(1); //success buzz
         }else{
 
             uart_string("Fail: Colorblind");
+            buzz(2); //failed buzz
         }
 }
 
