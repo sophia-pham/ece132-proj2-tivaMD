@@ -13,7 +13,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <math.h>
+#include <math.h> //for float calculation
+#include <ctype.h> //for toupper()
 #include "inc/tm4c123gh6pm.h"
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
@@ -30,7 +31,7 @@
 #include "driverlib/watchdog.h"
 
 /*------MACRO DECLARATIONS------*/
-#define DELAY           100000000
+#define DELAY           100000000 //for the 16mhz clk, 100M cycles is about 6.5s
 #define BUFF_SIZE 1000
 //index to state mappings
 #define S_OFF 0
@@ -44,6 +45,7 @@
 #define PORT_A_UART 0x03 //PA0(RX) and PA1(TX)
 #define PORT_E_LEDS 0x03 //PE0 (Red) and PE1 (Green)
 #define PORT_F_SERVO 0x04 //PF2
+#define PORT_F_IR 0x08 //PF3
 //specs for bmi
 #define MAX_WEIGHT 280
 #define MIN_WEIGHT 80
@@ -56,6 +58,7 @@ void pwm_setup(void);
 void ir_setup(void);
 void adc_setup(void);
 void uart_setup(void);
+void onboard_led_setup(void);
 void led_setup(void);
 void switch_setup(void);
 void uart_string(char string[]);
@@ -63,11 +66,13 @@ void uart_string_no_new(char string[]);
 void uart_float_no_new(float f, int precision);
 void uart_new(void);
 
+void WatchDogIntHandler(void);
+void ir_isr(void);
+
 void buzz(int mode);
 
 void weight_isr(void); //gpio interrupt isr; when button press, display or confirm weight
 void height_isr(void); //"" display or confirm height
-void WatchDogIntHandler(void);
 
 void colorblind(void);
 void eye_track(void);
@@ -75,7 +80,8 @@ void bmi(void);
 
 /*------GLOBAL VARIABLES------*/
 int user_in = -1; //parsed from user input; informs state transitions
-volatile bool g_bWatchDogFeed = 1; //tracker for watchdog
+volatile bool g_bWatchDogFeed = false; //tracker for watchdog
+bool input_wait = false;
 
 //for pwm
 unsigned long ulPeriod; // Stores PWM period in clock ticks
@@ -89,9 +95,10 @@ float height = -1;
 //set up FSM struct and states
 struct state{
     int id;
-    int outA; //UART
-    int outE; //CB Lights
-    int outF; //Servo
+//    int outA; //UART
+//    int outE; //CB Lights
+//    int outF; //Servo
+    char* message; //message to print to uart when this is current state
     int colorFlag; //flag to trigger color test
     int eyeFlag; //trigger eye test
     int bmiFlag; //trigger bmi test
@@ -109,32 +116,41 @@ void main(){
     SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
     //set up periphs
-    //watchdog_setup();
+    watchdog_setup();
     uart_setup();
     pwm_setup();
     adc_setup();
     ir_setup();
+    onboard_led_setup();
     led_setup();
     switch_setup();
 
+
+    //configure interrupt for when IR data falls to 0 (active low)
+    GPIOIntTypeSet(GPIO_PORTB_BASE, GPIO_PIN_3, GPIO_FALLING_EDGE); //add pin0 (sw2) where applicable
+    //tie handler to ivt
+    GPIOIntRegister(GPIO_PORTB_BASE, ir_isr);
+    //enable int
+    GPIOIntEnable(GPIO_PORTB_BASE, GPIO_INT_PIN_3);
+
     stype fsm[6] = {
         //id-outA-outE-outF-colorFlag-eyeFlag-bmiFlag-delay-next state
-        {S_OFF, PINS_OFF, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_OFF, "Turning system off...\n", 0, 0, 0, DELAY,
         {S_OFF, S_START, S_OFF, S_OFF, S_OFF, S_OFF}}, //only goes to start
 
-        {S_START, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_START, "System starting...\n", 0, 0, 0, DELAY,
         {S_OFF, S_START, S_IDLE, S_START, S_START, S_START}}, //goes to idle or off?
 
-        {S_IDLE, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 0, DELAY,
+        {S_IDLE, "Entering idle stage and opening menu...\n", 0, 0, 0, DELAY,
         {S_OFF, S_IDLE, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to any exam or off
 
-        {S_COLOR, PORT_A_UART, PORT_E_LEDS, PINS_OFF, 1, 0, 0, DELAY,
+        {S_COLOR, "Starting the colorblind test...\n", 1, 0, 0, DELAY,
         {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}}, //goes to idle
 
-        {S_EYE, PORT_A_UART, PINS_OFF, PORT_F_SERVO, 0, 1, 0, DELAY,
+        {S_EYE, "Starting the eye tracker test...\n", 0, 1, 0, DELAY,
         {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE, S_EYE}}, //goes to idle
 
-        {S_BMI, PORT_A_UART, PINS_OFF, PINS_OFF, 0, 0, 1, DELAY,
+        {S_BMI, "Starting the BMI test...\n", 0, 0, 1, DELAY,
         {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI, S_BMI}} //goes to idle
 
     };
@@ -143,36 +159,41 @@ void main(){
     cstate = fsm[S_OFF]; //set S_OFF as the first state
     char userIN; //test input
     int input = 0;
-    uart_string("In S_OFF. Press 'S' to Start.");
+    uart_string_no_new("System is off (S_OFF). Press 'S' to Start: ");
 
     while(1){
-        //uart_string("test");
+
         //collect user input
+        if (cstate.id != S_OFF) input_wait = true;
         userIN = UARTCharGet(UART0_BASE); //user input
-        switch(userIN){
+        UARTCharPut(UART0_BASE, userIN); //print it back
+        g_bWatchDogFeed = true; //cause we got a user input
+        input_wait = false;
+        uart_new(); //newline for next output
+        switch(toupper(userIN)){
                 case 'O': //S_OFF, waits for a user to start the process
                     input = 0;
-                    uart_string("'O' pressed... turning system off...");
+//                    uart_string("'O' pressed... turning system off...");
                     break;
                 case 'S': //S_START, collects user info
                     input = 1;
-                    uart_string("'S' pressed... system starting...");
+//                    uart_string("'S' pressed... system starting...");
                     break;
                 case 'I': //S_IDLE, displays test menu
                     input = 2;
-                    uart_string("'I' pressed... entering IDLE stage...");
+//                    uart_string("'I' pressed... entering IDLE stage...");
                     break;
                 case 'C': //S_COLOR, triggers color blind test
                     input = 3;
-                    uart_string("'C' pressed... starting the color blind test...");
+//                    uart_string("'C' pressed... starting the color blind test...");
                     break;
                 case 'E': //S_EYE, triggers eye track test
                     input = 4;
-                    uart_string("'E' pressed... starting the eye tracker test...");
+//                    uart_string("'E' pressed... starting the eye tracker test...");
                     break;
                 case 'B': //S_BMI, triggers bmi test
                     input = 5;
-                    uart_string("'B' pressed... starting the BMI test...");
+//                    uart_string("'B' pressed... starting the BMI test...");
                     break;
                 default:
                     continue; //input should be whatever it was before
@@ -180,10 +201,15 @@ void main(){
 
         //transition to the next state given input
         cstate = fsm[cstate.next[input]];
+        uart_string(cstate.message);
 
         //uart_string("test 2: state updated after key press");
 
         //use flags to trigger tests
+        if (cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
+            uart_string("Ensure you stay in front of the sensor during the exam.");
+            g_bWatchDogFeed = false; //can't assume the state of the user when we are not asking for uart input
+        }
         if(cstate.colorFlag == 1){
             colorblind();
         }
@@ -194,6 +220,7 @@ void main(){
             bmi();
         }
 
+
         //after test states transition back to idle
         if(cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
             cstate = fsm[cstate.next[S_IDLE]]; //transition to idle
@@ -201,19 +228,20 @@ void main(){
 
         //prompt user inputs
         if(cstate.id == S_OFF){
-            uart_string("In S_OFF. Press 'S' to Start.");
+            uart_string_no_new("System is off (S_OFF). Press 'S' to Start: ");
         }
         else if(cstate.id == S_START){
-            uart_string("Are you ready? Press 'I' to Choose Test.");
+            uart_string_no_new("Are you ready? Press 'I' to Choose Test: ");
         }
         else if(cstate.id == S_IDLE){
-            uart_string("Choose your test (C, E, B) or turn system off (O)");
+            uart_string("Tests available:");
+            uart_string("Colorblind exam (C)");
+            uart_string("Eye track exam (E)");
+            uart_string("BMI exam (B)");
+            uart_string_no_new("Choose your test (C, E, B) or turn system off (O): ");
         }
+        g_bWatchDogFeed = false; //wait for them to input; if a user is sensed, the flag will turn on and user will be prompted to enter input
     }
-
-//    eye_track();
-//    buzz(2);
-//    while(1){}
 }
 
 /*----------HEALTH EXAMS----------*/
@@ -227,6 +255,7 @@ void bmi(void){
     //prompt the user for weight entry
     uart_string("Please enter your weight (in pounds) using the potentiometer as a scale.\n\rUse the left button to check the current value, and the right button to submit.");
     //register and activate the isr that allows button press to print value
+    GPIOIntTypeSet(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0, GPIO_FALLING_EDGE); //add pin0 (sw2) where applicable
     GPIOIntRegister(GPIO_PORTF_BASE, weight_isr);
     GPIOIntEnable(GPIO_PORTF_BASE, GPIO_INT_PIN_4 | GPIO_INT_PIN_0); //left or right button press activates
 
@@ -347,6 +376,7 @@ void eye_track(){
 
         for(i = 2.5; i < 12.0; i = i + 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
+
          }
 
          //from left to right go from 10 to 5%
@@ -354,12 +384,18 @@ void eye_track(){
          for(i = 12.0; i > 2.5; i = i - 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
          }
+         g_bWatchDogFeed = true; //after each outer loop, feed the watchdog; if this somehow fails, the watchdog will be angry
     }
     PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, 0);
 
 
     uart_string("Did the patient's eyes follow the servo arm? Enter (Y/N)");
+    input_wait = true;
     answer = UARTCharGet(UART0_BASE);
+    UARTCharPut(UART0_BASE, answer); //print it back
+    uart_new();
+    g_bWatchDogFeed = true;
+    input_wait = false;
 
     if(answer == 'Y' || answer == 'y'){
         uart_string("Test successful!");
@@ -371,6 +407,8 @@ void eye_track(){
         uart_string("Test inconclusive!");
         buzz(2); //failed buzz
     }
+
+    uart_new();
 }
 
 /**
@@ -384,37 +422,49 @@ void colorblind(void){
     int greenFlag = 0; //flag for green test successful
     char C; //keyboard input
 
-        //TEST RED LIGHT
-        GPIO_PORTE_DATA_R = 0x01; //turn on Red LED
+    //TEST RED LIGHT
+    GPIO_PORTE_DATA_R = 0x01; //turn on Red LED
 
-        uart_string("Choose a color"); //ask the user for a color
-        C = UARTCharGet(UART0_BASE); //keyboard input
-        if(C == 'R' || C == 'r'){ //if user input is R for red
-            redFlag = 1; //mark flag
-        }
+    input_wait = true;
+    uart_string("Choose a color (R or G)"); //ask the user for a color
+    C = UARTCharGet(UART0_BASE); //keyboard input
+    UARTCharPut(UART0_BASE, C); //print it back
+    uart_new();
+    g_bWatchDogFeed = true;
+    input_wait = false;
+    if(C == 'R' || C == 'r'){ //if user input is R for red
+        redFlag = 1; //mark flag
+    }
 
-        GPIO_PORTE_DATA_R = 0x00; //turn off red
+    GPIO_PORTE_DATA_R = 0x00; //turn off red
 
-        SysCtlDelay(500000); //wait
+    SysCtlDelay(500000); //wait
 
-        //TEST GREEN LIGHT
-        GPIO_PORTE_DATA_R = 0x02;//turn on green
-        uart_string("Choose a color"); //ask the user for a color
-        C = UARTCharGet(UART0_BASE);
-        if(C == 'G' || C == 'g'){ //if user input is G for green
-            greenFlag = 1; //mark flag
-        }
+    //TEST GREEN LIGHT
+    GPIO_PORTE_DATA_R = 0x02;//turn on green
+    input_wait = true;
+    uart_string("Choose a color (R or G)"); //ask the user for a color
+    C = UARTCharGet(UART0_BASE);
+    g_bWatchDogFeed = true;
+    input_wait = false;
+    UARTCharPut(UART0_BASE, C); //print it back
+    uart_new();
+    if(C == 'G' || C == 'g'){ //if user input is G for green
+        greenFlag = 1; //mark flag
+    }
 
-        GPIO_PORTE_DATA_R = 0x00;//turn off green
+    GPIO_PORTE_DATA_R = 0x00;//turn off green
 
-        if(greenFlag && redFlag){
-            uart_string("Success: Not Colorblind");
-            buzz(1); //success buzz
-        }else{
+    if(greenFlag && redFlag){
+        uart_string("Success: Not Colorblind");
+        buzz(1); //success buzz
+    }else{
 
-            uart_string("Fail: Colorblind");
-            buzz(2); //failed buzz
-        }
+        uart_string("Fail: Colorblind");
+        buzz(2); //failed buzz
+    }
+
+    uart_new();
 }
 
 /*----------HELPER FUNCTIONS----------*/
@@ -558,6 +608,16 @@ void led_setup(void){
     GPIO_PORTE_DEN_R |= 0x03;  //data for PE0 and PE1, red and green leds
 }
 
+/*set up on board green LED for watchdog*/
+void onboard_led_setup(){
+    //GREEN LED
+    SYSCTL_RCGCGPIO_R |= 0b00100000; // port F
+    // set direction for pin 3, set to 1 for output
+    GPIO_PORTF_DIR_R |= 0b00001000;
+    // turn data enable on for pin 3
+    GPIO_PORTF_DEN_R |= 0b00001000;
+}
+
 /*set up UART*/
 void uart_setup(){
     //Port Configurations
@@ -583,18 +643,18 @@ void adc_setup(){
 
 }
 
-/*IR input setup (port F)*/
+/*IR input setup (port B)*/
 void ir_setup() {
-    int in_pins = 0x08;
+    int in_pins = 0x08; //pin 3
     //configure the Clock
-    SYSCTL_RCGCGPIO_R |= 0b00100000; //port F
+    SYSCTL_RCGCGPIO_R |= 0b00000010; //port B
 
     // set Direction for in_pins, set to 0 for input
-    GPIO_PORTF_DIR_R &= ~in_pins; //if dir = 01111111 then &= ~(b00010001) then dir = 01101110
+    GPIO_PORTB_DIR_R &= ~in_pins; //if dir = 01111111 then &= ~(b00010001) then dir = 01101110
     // set Pull Up Resistor, PUR = 1 for in_pins
-    GPIO_PORTF_PUR_R |= in_pins; //PUR is HIGH for inputs
+    GPIO_PORTB_PUR_R |= in_pins; //PUR is HIGH for inputs
     // set Data Enable on for in_pins
-    GPIO_PORTF_DEN_R |= in_pins;
+    GPIO_PORTB_DEN_R |= in_pins;
 }
 
 /*set up PWM (M1PWM6)*/
@@ -659,7 +719,7 @@ void watchdog_setup(){
     SysCtlPeripheralEnable(SYSCTL_PERIPH_WDOG0);
 
     //wait for module to be ready
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_WDOG0)){}
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_WDOG0));
 
     //enable watchdog interrupt
     IntEnable(INT_WATCHDOG);
@@ -669,12 +729,15 @@ void watchdog_setup(){
         WatchdogUnlock(WATCHDOG0_BASE);
     }
 
+    //register the interrupt handler??
+    WatchdogIntRegister(WATCHDOG0_BASE, WatchDogIntHandler);
+
     //enable the watchdog interupt
     WatchdogIntEnable(WATCHDOG0_BASE);
     WatchdogIntTypeSet(WATCHDOG0_BASE, WATCHDOG_INT_TYPE_INT);
 
-    //set the period - reload timer 2.5 seconds, will reset after 5 seconds
-    WatchdogReloadSet(WATCHDOG0_BASE, SysCtlClockGet() * 2.5);
+    //set the period - reload timer 15 seconds, will reset after 30 seconds
+    WatchdogReloadSet(WATCHDOG0_BASE, SysCtlClockGet() * 30);
 
     //enable resetting if not fed
     WatchdogResetEnable(WATCHDOG0_BASE);
@@ -686,10 +749,35 @@ void watchdog_setup(){
     WatchdogEnable(WATCHDOG0_BASE);
 }
 
-/*Watchdog interrupt handler*/
+/*Watchdog interrupt handler; after watchdog first timeout, clear the interrupt or else watchdog will reset system*/
 void WatchDogIntHandler(){
-    //if IR sensor is active feed the handler
-    if((GPIO_PORTF_DATA_R & 0x08) == 0){
+    // Clear the watchdog interrupt.
+    if (g_bWatchDogFeed)
+    {
+        if (input_wait) {
+            uart_new();
+            uart_string("Please enter an input."); //only notify the user if we are waiting on input from them (e.g. not in eye track test)
+        }
+        WatchdogIntClear(WATCHDOG0_BASE);
+        GPIO_PORTF_DATA_R &= 0b11110111;//turn green led off
+        if (input_wait)
+            g_bWatchDogFeed = false; //they have to enter an input or else the LED will come up
+        //if not waiting for input, the watchdog stays fed
+    } else {
+        GPIO_PORTF_DATA_R |= 0b00001000;//turn green led on
+//        if (cstate.id == S_OFF) uart_string("No user sensed. Activate the sensor to cancel system reset."); //spams to uart so don't use this
+        if (input_wait) buzz(3); //if we need the user to do something to feed the watchdog, tell them
+        //other case would be we are stalling in a function or waiting in off mode (in which case we automatically reset)
+    }
+}
+
+/*ir ISR, activate the flag to feed the watchdog when the IR sensor activates*/
+void ir_isr(){
+    g_bWatchDogFeed = true;
+    GPIOIntClear(GPIO_PORTB_BASE , GPIO_INT_PIN_3); //clear the flag so that we can interrupt again in the future
+
+    //if active rn (we missed the warning timer), then clear it here
+    if (WatchdogIntStatus(WATCHDOG0_BASE, true)){
         WatchdogIntClear(WATCHDOG0_BASE);
     }
 }
