@@ -3,12 +3,16 @@
 //Lab section: Tuesday 1:35
 //*************************************************
 //Date Started: 4/21/2026
-//Date of Last Modification:
+//Date of Last Modification: 5/1/2026
 //Assignment: Proj. 2
 //*************************************************
-//Purpose of program:
-//Program Inputs:
-//Program Outputs:
+//Purpose of program: 
+//The program is for the prototype of an integrative health test that features general health exams such
+//as color blindness, BMI, and an eye tracker test. The tests utilize a number of input and output peripherals as well as
+//foundational embedded systems techniques.
+//
+//Program Inputs: UART, IR Sensor, Potentiometer, Button Switches
+//Program Outputs: UART, LEDs, Servo
 //*************************************************
 
 #include <stdbool.h>
@@ -61,13 +65,13 @@ void uart_setup(void);
 void onboard_led_setup(void);
 void led_setup(void);
 void switch_setup(void);
-void uart_string(char string[]);
-void uart_string_no_new(char string[]);
-void uart_float_no_new(float f, int precision);
-void uart_new(void);
+void uart_string(char string[]); //prints a string, return, new line
+void uart_string_no_new(char string[]); //prints a string without new line
+void uart_float_no_new(float f, int precision); //prints a float without new line
+void uart_new(void); //prints a new line 
 
 void WatchDogIntHandler(void);
-void ir_isr(void);
+void ir_isr(void); 
 
 void buzz(int mode);
 
@@ -81,7 +85,7 @@ void bmi(void);
 /*------GLOBAL VARIABLES------*/
 int user_in = -1; //parsed from user input; informs state transitions
 volatile bool g_bWatchDogFeed = false; //tracker for watchdog
-bool input_wait = false;
+bool input_wait = false; //flag to tell watchdog that we are waiting for user input 
 
 //for pwm
 unsigned long ulPeriod; // Stores PWM period in clock ticks
@@ -95,9 +99,6 @@ float height = -1;
 //set up FSM struct and states
 struct state{
     int id;
-//    int outA; //UART
-//    int outE; //CB Lights
-//    int outF; //Servo
     char* message; //message to print to uart when this is current state
     int colorFlag; //flag to trigger color test
     int eyeFlag; //trigger eye test
@@ -108,7 +109,6 @@ struct state{
 
 typedef struct state stype; //define type
 stype cstate; //current state
-
 
 void main(){
 
@@ -125,33 +125,38 @@ void main(){
     led_setup();
     switch_setup();
 
-
     //configure interrupt for when IR data falls to 0 (active low)
     GPIOIntTypeSet(GPIO_PORTB_BASE, GPIO_PIN_3, GPIO_FALLING_EDGE); //add pin0 (sw2) where applicable
-    //tie handler to ivt
+    //tie handler to isr
     GPIOIntRegister(GPIO_PORTB_BASE, ir_isr);
     //enable int
     GPIOIntEnable(GPIO_PORTB_BASE, GPIO_INT_PIN_3);
 
     stype fsm[6] = {
-        //id-outA-outE-outF-colorFlag-eyeFlag-bmiFlag-delay-next state
+        //id-message-colorFlag-eyeFlag-bmiFlag-delay-next state 
+        //OFF STATE
         {S_OFF, "Turning system off...\n", 0, 0, 0, DELAY,
         {S_OFF, S_START, S_OFF, S_OFF, S_OFF, S_OFF}}, //only goes to start
 
+        //START STATE  
         {S_START, "System starting...\n", 0, 0, 0, DELAY,
-        {S_OFF, S_START, S_IDLE, S_START, S_START, S_START}}, //goes to idle or off?
+        {S_OFF, S_START, S_IDLE, S_START, S_START, S_START}}, //goes to off, state, or idle
 
+        //IDLE STATE
         {S_IDLE, "Entering idle stage and opening menu...\n", 0, 0, 0, DELAY,
-        {S_OFF, S_IDLE, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to any exam or off
+        {S_OFF, S_IDLE, S_IDLE, S_COLOR, S_EYE, S_BMI}}, //goes to off, idle, color, eye, bmi
 
+        //COLOR BLIND TEST STATE
         {S_COLOR, "Starting the colorblind test...\n", 1, 0, 0, DELAY,
-        {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}}, //goes to idle
+        {S_OFF, S_COLOR, S_IDLE, S_COLOR, S_COLOR, S_COLOR}}, //goes to off or idle
 
+        //EYE TRACKER TEST STATE 
         {S_EYE, "Starting the eye tracker test...\n", 0, 1, 0, DELAY,
-        {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE, S_EYE}}, //goes to idle
+        {S_OFF, S_EYE, S_IDLE, S_EYE, S_EYE, S_EYE}}, //goes to off or idle
 
+        //BMI TEST STATE 
         {S_BMI, "Starting the BMI test...\n", 0, 0, 1, DELAY,
-        {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI, S_BMI}} //goes to idle
+        {S_OFF, S_BMI, S_IDLE, S_BMI, S_BMI, S_BMI}} //goes to off or idle 
 
     };
 
@@ -164,36 +169,30 @@ void main(){
     while(1){
 
         //collect user input
-        if (cstate.id != S_OFF) input_wait = true;
+        if (cstate.id != S_OFF) input_wait = true; //waiting for user input
         userIN = UARTCharGet(UART0_BASE); //user input
         UARTCharPut(UART0_BASE, userIN); //print it back
         g_bWatchDogFeed = true; //cause we got a user input
-        input_wait = false;
+        input_wait = false; //no longer waiting for user input 
         uart_new(); //newline for next output
         switch(toupper(userIN)){
                 case 'O': //S_OFF, waits for a user to start the process
                     input = 0;
-//                    uart_string("'O' pressed... turning system off...");
                     break;
                 case 'S': //S_START, collects user info
                     input = 1;
-//                    uart_string("'S' pressed... system starting...");
                     break;
                 case 'I': //S_IDLE, displays test menu
                     input = 2;
-//                    uart_string("'I' pressed... entering IDLE stage...");
                     break;
                 case 'C': //S_COLOR, triggers color blind test
                     input = 3;
-//                    uart_string("'C' pressed... starting the color blind test...");
                     break;
                 case 'E': //S_EYE, triggers eye track test
                     input = 4;
-//                    uart_string("'E' pressed... starting the eye tracker test...");
                     break;
                 case 'B': //S_BMI, triggers bmi test
                     input = 5;
-//                    uart_string("'B' pressed... starting the BMI test...");
                     break;
                 default:
                     continue; //input should be whatever it was before
@@ -201,13 +200,11 @@ void main(){
 
         //transition to the next state given input
         cstate = fsm[cstate.next[input]];
-        uart_string(cstate.message);
-
-        //uart_string("test 2: state updated after key press");
+        uart_string(cstate.message); //UART outputs current state 
 
         //use flags to trigger tests
         if (cstate.colorFlag || cstate.eyeFlag || cstate.bmiFlag){
-            uart_string("Ensure you stay in front of the sensor during the exam.");
+            uart_string("Ensure you stay in front of the sensor during the exam."); //watchdog warning
             g_bWatchDogFeed = false; //can't assume the state of the user when we are not asking for uart input
         }
         if(cstate.colorFlag == 1){
@@ -360,27 +357,27 @@ void height_isr(){
  */
 //eye track test
 void eye_track(){
-    char answer;
+    char answer; //user input variable
+    
     //Set duty cycles
     //Servo has period of 20ms or 50Hz
     //~1ms is all the way to the left (-90 degrees) = 5% DC
     //~1.5ms is centered (0 degrees) = 7.5% DC
     //~2ms is all the way to the right (90 degrees) = 10% DC
+    //Above duty cycles are recommendations from the data sheet, duty cycles changed slightly with testing 
 
     //sequence through 3 full movements (left to right) for the test
     int j;
     for(j = 1; j < 4; j++){
         float i;
-        //from left to right go from 5 to 10%
-        //using a for loop tos increment through duty cycle for a more continuous movement
-
+        
+        //using a for loop to increment through duty cycle for a more continuous movement
+        //increments from 2.5 to 12 % DC to move from left to right
         for(i = 2.5; i < 12.0; i = i + 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
-
          }
 
-         //from left to right go from 10 to 5%
-         //changed 10 to 11 and 5 to 2.0
+         //increments from 12% to 2.5% DC to move from right to left 
          for(i = 12.0; i > 2.5; i = i - 0.1){
              PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, (int)((i * ulPeriod) / 100));    SysCtlDelay(DELAY/200);
          }
@@ -388,14 +385,14 @@ void eye_track(){
     }
     PWMPulseWidthSet(PWM1_BASE, PWM_OUT_6, 0);
 
-
+    //Prompt tester for test feedback 
     uart_string("Did the patient's eyes follow the servo arm? Enter (Y/N)");
-    input_wait = true;
+    input_wait = true; //waiting for user input 
     answer = UARTCharGet(UART0_BASE);
     UARTCharPut(UART0_BASE, answer); //print it back
     uart_new();
     g_bWatchDogFeed = true;
-    input_wait = false;
+    input_wait = false; //no longer waiting for user input
 
     if(answer == 'Y' || answer == 'y'){
         uart_string("Test successful!");
@@ -425,13 +422,13 @@ void colorblind(void){
     //TEST RED LIGHT
     GPIO_PORTE_DATA_R = 0x01; //turn on Red LED
 
-    input_wait = true;
+    input_wait = true; //waiting for user input 
     uart_string("Choose a color (R or G)"); //ask the user for a color
     C = UARTCharGet(UART0_BASE); //keyboard input
     UARTCharPut(UART0_BASE, C); //print it back
     uart_new();
     g_bWatchDogFeed = true;
-    input_wait = false;
+    input_wait = false; //no longer waiting for user input 
     if(C == 'R' || C == 'r'){ //if user input is R for red
         redFlag = 1; //mark flag
     }
@@ -442,11 +439,11 @@ void colorblind(void){
 
     //TEST GREEN LIGHT
     GPIO_PORTE_DATA_R = 0x02;//turn on green
-    input_wait = true;
+    input_wait = true; //waiting for user input 
     uart_string("Choose a color (R or G)"); //ask the user for a color
     C = UARTCharGet(UART0_BASE);
     g_bWatchDogFeed = true;
-    input_wait = false;
+    input_wait = false; //no longer waiting for user input 
     UARTCharPut(UART0_BASE, C); //print it back
     uart_new();
     if(C == 'G' || C == 'g'){ //if user input is G for green
@@ -664,9 +661,10 @@ void pwm_setup(){
     //80MHz / 64 = 1.25MHz and 1.25MHz/50Hz = 25,000
     //A ulperiod of 25,000 fits within the 16 bit servo register
 
-
+    //set pwm clock
     SysCtlPWMClockSet(SYSCTL_PWMDIV_64);
 
+    //enable port f 
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
 
     //wait for the peripheral to be ready
@@ -685,7 +683,7 @@ void pwm_setup(){
     ulPeriod = (SysCtlClockGet() / 32) / divider;
 
     // Calculate initial period for buzzer (440 Hz)
-    buzzPeriod = SysCtlClockGet() / 64 / 440;
+    buzzPeriod = *SysCtlClockGet() / 64) / 440;
 
     // Configure PF2 (M1PWM6) for PWM output
     // Information about GPIOPinConfigure is on page 266
@@ -765,7 +763,6 @@ void WatchDogIntHandler(){
         //if not waiting for input, the watchdog stays fed
     } else {
         GPIO_PORTF_DATA_R |= 0b00001000;//turn green led on
-//        if (cstate.id == S_OFF) uart_string("No user sensed. Activate the sensor to cancel system reset."); //spams to uart so don't use this
         if (input_wait) buzz(3); //if we need the user to do something to feed the watchdog, tell them
         //other case would be we are stalling in a function or waiting in off mode (in which case we automatically reset)
     }
